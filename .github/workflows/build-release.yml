@@ -47,13 +47,7 @@ jobs:
             RELEASE_TAG="${GITHUB_REF_NAME}"
             IS_TAG="true"
           else
-            echo "from pathlib import Path, re, sys
-p = Path('ris_app/__init__.py').read_text(encoding='utf-8')
-import re
-m = re.search(r'__version__\\s*=\\s*[\"\\']([^\"\\']+)[\"\\']', p)
-print(m.group(1) if m else '0.0.0')" > get_version.py
-
-            VERSION=$(python get_version.py)
+            VERSION=$(python scripts/get_version.py)
             RELEASE_TAG="v${VERSION}"
             IS_TAG="false"
           fi
@@ -63,7 +57,7 @@ print(m.group(1) if m else '0.0.0')" > get_version.py
           echo "is_tag=${IS_TAG}" >> "$GITHUB_OUTPUT"
           echo "✅ Version détectée : ${VERSION}"
 
-      - name: Build zips (core & plugins) + checksums + catalog
+      - name: Build zips and catalog
         shell: bash
         env:
           VERSION: ${{ steps.resolve_version.outputs.version }}
@@ -73,55 +67,13 @@ print(m.group(1) if m else '0.0.0')" > get_version.py
         run: |
           set -euo pipefail
           mkdir -p artifacts
+
           echo "📦 Zippage du core..."
           zip -r "artifacts/ris_app_core_${VERSION}.zip" ris_app -x "ris_app/plugins/*" >/dev/null
           sha256sum "artifacts/ris_app_core_${VERSION}.zip" | awk '{print $1}' > "artifacts/ris_app_core_${VERSION}.sha256"
 
           echo "📦 Zippage des plugins..."
-          PLUGINS_JSON="[]"
-          for d in ris_app/plugins/*; do
-            [ -d "$d" ] || continue
-            [ -f "$d/plugin.json" ] || continue
-            SLUG=$(python -c "import json; print(json.load(open('$d/plugin.json'))['slug'])")
-            PVERSION=$(python -c "import json; print(json.load(open('$d/plugin.json'))['version'])")
-            ZIPNAME="plugin_${SLUG}_${PVERSION}.zip"
-            (cd "$d" && zip -r "../../artifacts/${ZIPNAME}" . >/dev/null)
-            SHA=$(sha256sum "artifacts/${ZIPNAME}" | awk '{print $1}')
-            echo "$SHA" > "artifacts/${ZIPNAME}.sha256"
-
-            if [ "$IS_TAG" = "true" ]; then
-              ZIP_URL="https://github.com/${REPO_SLUG}/releases/download/${RELEASE_TAG}/${ZIPNAME}"
-            else
-              ZIP_URL="${ZIPNAME}"
-            fi
-
-            PLUGINS_JSON=$(python -c "import json,sys; arr=json.loads('$PLUGINS_JSON'); arr.append({'slug':'$SLUG','version':'$PVERSION','zip_url':'$ZIP_URL','sha256':'$SHA'}); print(json.dumps(arr))")
-          done
-
-          CORE_ZIP="ris_app_core_${VERSION}.zip"
-          if [ "$IS_TAG" = "true" ]; then
-            CORE_URL="https://github.com/${REPO_SLUG}/releases/download/${RELEASE_TAG}/${CORE_ZIP}"
-          else
-            CORE_URL="${CORE_ZIP}"
-          fi
-          CORE_SHA=$(cat "artifacts/ris_app_core_${VERSION}.sha256")
-
-          echo "🧾 Création du catalog.json..."
-          echo "import json, os, pathlib
-version=os.environ['VERSION']
-core_zip=f'ris_app_core_{version}.zip'
-repo=os.environ.get('REPO_SLUG','')
-is_tag=os.environ.get('IS_TAG','false')=='true'
-release_tag=os.environ.get('RELEASE_TAG','')
-core_url=f'https://github.com/{repo}/releases/download/{release_tag}/{core_zip}' if is_tag else core_zip
-core_sha=open(f'artifacts/ris_app_core_{version}.sha256').read().strip()
-plugins=json.loads('''${PLUGINS_JSON}''')
-catalog={'core':{'version':version,'zip_url':core_url,'sha256':core_sha},'plugins':plugins}
-pathlib.Path('artifacts/catalog.json').write_text(json.dumps(catalog,indent=2),encoding='utf-8')
-pathlib.Path('ris_app/data').mkdir(parents=True,exist_ok=True)
-pathlib.Path('ris_app/data/catalog.json').write_text(json.dumps(catalog,indent=2),encoding='utf-8')
-" > gen_catalog.py
-          python gen_catalog.py
+          python scripts/gen_catalog.py "${VERSION}" "${IS_TAG}" "${RELEASE_TAG}" "${REPO_SLUG}"
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
