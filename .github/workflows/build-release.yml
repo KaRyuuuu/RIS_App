@@ -40,39 +40,6 @@ jobs:
         run: |
           mkdir -p artifacts
           cp ris_app/data/catalog.json artifacts/catalog.json
-
-      - name: Create core archive
-        run: |
-          python - <<'PY'
-from pathlib import Path
-from ris_app import __version__
-from ris_app.config import ROOT_DIR, PLUGINS_DIR
-from ris_app.utils.io import zip_dir
-
-core_dir = ROOT_DIR
-archive_path = Path('artifacts') / f'ris_app_core_{__version__}.zip'
-exclude = [PLUGINS_DIR]
-zip_dir(core_dir, archive_path, exclude=exclude)
-PY
-
-      - name: Create plugin archives
-        run: |
-          python - <<'PY'
-import json
-from pathlib import Path
-from ris_app.config import PLUGINS_DIR
-from ris_app.utils.io import zip_dir
-
-artifacts = Path('artifacts')
-artifacts.mkdir(exist_ok=True)
-for plugin_json in PLUGINS_DIR.glob('*/plugin.json'):
-    data = json.loads(plugin_json.read_text(encoding='utf-8'))
-    slug = data['slug']
-    version = data['version']
-    zip_path = artifacts / f'plugin_{slug}_{version}.zip'
-    zip_dir(plugin_json.parent, zip_path)
-PY
-
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
