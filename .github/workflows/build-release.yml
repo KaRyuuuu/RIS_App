@@ -2,10 +2,9 @@ name: Build and Release RIS_app
 
 on:
   push:
-    branches:
-      - main
-    tags:
-      - 'v*'
+    branches: [main]
+  tags:
+    - 'v*'
   workflow_dispatch:
 
 jobs:
