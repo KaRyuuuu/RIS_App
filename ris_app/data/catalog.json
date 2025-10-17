@@ -1,0 +1,21 @@
+{
+  "core": {
+    "version": "0.1.0",
+    "zip_url": "https://github.com/KaRyuuuuuu/RIS_app/releases/download/v0.1.0/ris_app_core_0.1.0.zip",
+    "sha256": ""
+  },
+  "plugins": [
+    {
+      "slug": "hello_world",
+      "version": "1.0.0",
+      "zip_url": "https://github.com/KaRyuuuuuu/RIS_app/releases/download/v0.1.0/plugin_hello_world_1.0.0.zip",
+      "sha256": ""
+    },
+    {
+      "slug": "sample_ris_tool",
+      "version": "0.5.0",
+      "zip_url": "https://github.com/KaRyuuuuuu/RIS_app/releases/download/v0.1.0/plugin_sample_ris_tool_0.5.0.zip",
+      "sha256": ""
+    }
+  ]
+}
