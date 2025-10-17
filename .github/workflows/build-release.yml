@@ -8,14 +8,14 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write  # autorise la création de release
+  contents: write
 
 jobs:
   build:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository (with tags)
+      - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
@@ -47,22 +47,18 @@ jobs:
             RELEASE_TAG="${GITHUB_REF_NAME}"
             IS_TAG="true"
           else
-            # Fallback : lit __version__ depuis ris_app/__init__.py
-            VERSION=$(python - <<'PY'
-from pathlib import Path
-import re
-p = Path("ris_app/__init__.py").read_text(encoding="utf-8")
-m = re.search(r"__version__\s*=\s*['\"]([^'\"]+)['\"]", p)
-print(m.group(1) if m else "0.0.0")
-PY
-)
+            echo "from pathlib import Path, re; \
+p=Path('ris_app/__init__.py').read_text(); \
+import re; m=re.search(r'__version__\\s*=\\s*[\"\\']([^\"\\']+)[\"\\']', p); \
+print(m.group(1) if m else '0.0.0')" > get_version.py
+            VERSION=$(python get_version.py)
             RELEASE_TAG="v${VERSION}"
             IS_TAG="false"
           fi
-
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "release_tag=${RELEASE_TAG}" >> "$GITHUB_OUTPUT"
           echo "is_tag=${IS_TAG}" >> "$GITHUB_OUTPUT"
+          echo "✅ Version résolue: ${VERSION}"
 
       - name: Build zips (core & plugins) + checksums + catalog
         shell: bash
@@ -82,19 +78,9 @@ PY
           PLUGINS_JSON="[]"
           for d in ris_app/plugins/*; do
             [ -d "$d" ] || continue
-            if [ ! -f "$d/plugin.json" ]; then
-              echo "⚠️  $d n’a pas de plugin.json, ignoré"
-              continue
-            fi
-            read -r SLUG PVERSION <<< $(python - <<'PY'
-import json, sys, os
-p = sys.argv[1]
-with open(os.path.join(p, "plugin.json"), "r", encoding="utf-8") as f:
-    j = json.load(f)
-print(j.get("slug", "unknown"), j.get("version", "0.0.0"))
-PY
-"$d")
-
+            [ -f "$d/plugin.json" ] || continue
+            SLUG=$(python -c "import json; print(json.load(open('$d/plugin.json'))['slug'])")
+            PVERSION=$(python -c "import json; print(json.load(open('$d/plugin.json'))['version'])")
             ZIPNAME="plugin_${SLUG}_${PVERSION}.zip"
             (cd "$d" && zip -r "../../artifacts/${ZIPNAME}" . >/dev/null)
             SHA=$(sha256sum "artifacts/${ZIPNAME}" | awk '{print $1}')
@@ -106,14 +92,7 @@ PY
               ZIP_URL="${ZIPNAME}"
             fi
 
-            PLUGINS_JSON=$(python - <<'PY'
-import json, sys
-arr = json.loads(sys.argv[1])
-slug, ver, url, sha = sys.argv[2:6]
-arr.append({"slug": slug, "version": ver, "zip_url": url, "sha256": sha})
-print(json.dumps(arr))
-PY
-"$PLUGINS_JSON" "$SLUG" "$PVERSION" "$ZIP_URL" "$SHA")
+            PLUGINS_JSON=$(python -c "import json,sys; arr=json.loads('$PLUGINS_JSON'); arr.append({'slug':'$SLUG','version':'$PVERSION','zip_url':'$ZIP_URL','sha256':'$SHA'}); print(json.dumps(arr))")
           done
 
           CORE_ZIP="ris_app_core_${VERSION}.zip"
@@ -125,25 +104,20 @@ PY
           CORE_SHA=$(cat "artifacts/ris_app_core_${VERSION}.sha256")
 
           echo "🧾 Génération du catalog.json..."
-          python - <<'PY'
-import json, os
-from pathlib import Path
+          python - <<EOF
+import json, os, pathlib
 version = os.environ["VERSION"]
-repo = os.environ.get("REPO_SLUG","")
-is_tag = os.environ.get("IS_TAG","false") == "true"
-release_tag = os.environ.get("RELEASE_TAG","")
-core_zip = f"ris_app_core_{version}.zip"
-core_url = f"https://github.com/{repo}/releases/download/{release_tag}/{core_zip}" if is_tag else core_zip
-core_sha = Path(f"artifacts/ris_app_core_{version}.sha256").read_text().strip()
-plugins = json.loads(os.environ.get("PLUGINS_JSON", "[]"))
+core_url = os.environ.get("CORE_URL", "${CORE_URL}")
+core_sha = open(f"artifacts/ris_app_core_{version}.sha256").read().strip()
+plugins = json.loads('''${PLUGINS_JSON}''')
 catalog = {
   "core": {"version": version, "zip_url": core_url, "sha256": core_sha},
   "plugins": plugins
 }
-Path("artifacts/catalog.json").write_text(json.dumps(catalog, indent=2), encoding="utf-8")
-Path("ris_app/data").mkdir(parents=True, exist_ok=True)
-Path("ris_app/data/catalog.json").write_text(json.dumps(catalog, indent=2), encoding="utf-8")
-PY
+pathlib.Path("artifacts/catalog.json").write_text(json.dumps(catalog, indent=2), encoding="utf-8")
+pathlib.Path("ris_app/data").mkdir(parents=True, exist_ok=True)
+pathlib.Path("ris_app/data/catalog.json").write_text(json.dumps(catalog, indent=2), encoding="utf-8")
+EOF
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
