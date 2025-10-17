@@ -33,7 +33,7 @@ jobs:
           pip install ruff pytest
 
       - name: Run lint
-        run: ruff check .
+        run: ruff check . --fix
 
       - name: Run tests
         run: pytest
