@@ -1,0 +1,85 @@
+name: Build & Release
+
+on:
+  # 1) Création d'une release quand tu pousses un tag du style v1.2.3
+  push:
+    tags:
+      - "v*"
+  # 2) OU tu peux déclencher à la main depuis l'onglet "Actions"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version (ex: v0.4.2). Si vide et pas de tag, on fera 'nightly'."
+        required: false
+        default: ""
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt || echo "pas de requirements.txt"
+          pip install pyinstaller
+
+      # ⚠️ Adapte l’entrée au vrai point d'entrée de TON app
+      # (ex: launcher_ctk.py). Ajoute --icon si tu as un .ico.
+      - name: Build exe (PyInstaller)
+        run: |
+          pyinstaller --noconfirm --onefile --noconsole launcher_ctk.py ^
+            --add-data "assets\\servers.json;assets"
+          dir dist
+
+      # (Optionnel) Zip propret pour distribution
+      - name: Prepare ZIP
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path release
+          Copy-Item dist\\launcher_ctk.exe release\\RIS_App.exe
+          # Ajoute d'autres fichiers si besoin (README, config par défaut, etc.)
+          Compress-Archive -Path release\\* -DestinationPath RIS_App-win-x64.zip
+          CertUtil -hashfile RIS_App-win-x64.zip SHA256 > SHA256SUM.txt
+
+      - name: Compute version
+        id: version
+        shell: bash
+        run: |
+          # Priorité au tag
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            TAG="${GITHUB_REF_NAME}"
+          else
+            # sinon input manuel (Actions -> Run workflow)
+            TAG="${{ github.event.inputs.version }}"
+          fi
+          if [[ -z "$TAG" ]]; then
+            TAG="nightly-$(date -u +%Y%m%d%H%M%S)"
+            echo "IS_PRERELEASE=true" >> $GITHUB_OUTPUT
+          else
+            echo "IS_PRERELEASE=false" >> $GITHUB_OUTPUT
+          fi
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          echo "Version: $TAG"
+
+      - name: Create/Update GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: ${{ steps.version.outputs.tag }}
+          prerelease: ${{ steps.version.outputs.IS_PRERELEASE }}
+          draft: false
+          files: |
+            dist/launcher_ctk.exe
+            RIS_App-win-x64.zip
+            SHA256SUM.txt
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

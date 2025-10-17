@@ -1,0 +1,17 @@
+[
+  {
+    "name": "Release (Latest, ZIP)",
+    "url": "https://github.com/KaRyuuuu/RIS_App/releases/latest/download/RIS_App-win-x64.zip",
+    "region": "EU"
+  },
+  {
+    "name": "Release (Latest, EXE)",
+    "url": "https://github.com/KaRyuuuu/RIS_App/releases/latest/download/launcher_ctk.exe",
+    "region": "EU"
+  },
+  {
+    "name": "RAW (backup JSON)",
+    "url": "https://raw.githubusercontent.com/KaRyuuuu/RIS_App/main/assets/servers.json",
+    "region": "EU"
+  }
+]
