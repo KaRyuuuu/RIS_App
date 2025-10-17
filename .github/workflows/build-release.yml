@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write  # requis pour créer/mettre à jour une release
+  contents: write  # autorise la création de release
 
 jobs:
   build:
@@ -40,14 +40,15 @@ jobs:
 
       - name: Resolve version
         id: resolve_version
+        shell: bash
         run: |
           if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
             VERSION="${GITHUB_REF_NAME#v}"
             RELEASE_TAG="${GITHUB_REF_NAME}"
             IS_TAG="true"
           else
-            # Fallback: lit __version__ depuis ris_app/__init__.py
-            VERSION=$(python - << 'PY'
+            # Fallback : lit __version__ depuis ris_app/__init__.py
+            VERSION=$(python - <<'PY'
 from pathlib import Path
 import re
 p = Path("ris_app/__init__.py").read_text(encoding="utf-8")
@@ -58,11 +59,13 @@ PY
             RELEASE_TAG="v${VERSION}"
             IS_TAG="false"
           fi
-          echo "version=${VERSION}"      >> "$GITHUB_OUTPUT"
+
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "release_tag=${RELEASE_TAG}" >> "$GITHUB_OUTPUT"
-          echo "is_tag=${IS_TAG}"        >> "$GITHUB_OUTPUT"
+          echo "is_tag=${IS_TAG}" >> "$GITHUB_OUTPUT"
 
       - name: Build zips (core & plugins) + checksums + catalog
+        shell: bash
         env:
           VERSION: ${{ steps.resolve_version.outputs.version }}
           RELEASE_TAG: ${{ steps.resolve_version.outputs.release_tag }}
@@ -71,54 +74,48 @@ PY
         run: |
           set -euo pipefail
           mkdir -p artifacts
-          # 1) Zipper le core (sans plugins)
+          echo "📦 Zippage du core..."
           zip -r "artifacts/ris_app_core_${VERSION}.zip" ris_app -x "ris_app/plugins/*" >/dev/null
           sha256sum "artifacts/ris_app_core_${VERSION}.zip" | awk '{print $1}' > "artifacts/ris_app_core_${VERSION}.sha256"
 
-          # 2) Zipper chaque plugin
+          echo "📦 Zippage des plugins..."
           PLUGINS_JSON="[]"
           for d in ris_app/plugins/*; do
             [ -d "$d" ] || continue
             if [ ! -f "$d/plugin.json" ]; then
-              echo "WARN: $d sans plugin.json, skip"
+              echo "⚠️  $d n’a pas de plugin.json, ignoré"
               continue
             fi
-            # Lit slug & version du plugin.json via Python (pas de jq nécessaire)
-            read -r SLUG PVERSION <<EOF
-$(python - << 'PY'
-import json,sys,os
-p=sys.argv[1]
-with open(os.path.join(p,"plugin.json"),"r",encoding="utf-8") as f:
-    j=json.load(f)
-print(j.get("slug","unknown"), j.get("version","0.0.0"))
+            read -r SLUG PVERSION <<< $(python - <<'PY'
+import json, sys, os
+p = sys.argv[1]
+with open(os.path.join(p, "plugin.json"), "r", encoding="utf-8") as f:
+    j = json.load(f)
+print(j.get("slug", "unknown"), j.get("version", "0.0.0"))
 PY
 "$d")
-EOF
+
             ZIPNAME="plugin_${SLUG}_${PVERSION}.zip"
             (cd "$d" && zip -r "../../artifacts/${ZIPNAME}" . >/dev/null)
             SHA=$(sha256sum "artifacts/${ZIPNAME}" | awk '{print $1}')
             echo "$SHA" > "artifacts/${ZIPNAME}.sha256"
 
-            # Construit l'URL de téléchargement pour le catalog
             if [ "$IS_TAG" = "true" ]; then
               ZIP_URL="https://github.com/${REPO_SLUG}/releases/download/${RELEASE_TAG}/${ZIPNAME}"
             else
-              # Si pas de tag: URL indicative; le catalog restera utile en local.
               ZIP_URL="${ZIPNAME}"
             fi
 
-            # Ajoute l'entrée plugin au futur catalog.json
-            PLUGINS_JSON=$(python - << 'PY'
-import json,sys
-arr=json.loads(sys.argv[1])
-slug,ver,url,sha=sys.argv[2],sys.argv[3],sys.argv[4],sys.argv[5]
+            PLUGINS_JSON=$(python - <<'PY'
+import json, sys
+arr = json.loads(sys.argv[1])
+slug, ver, url, sha = sys.argv[2:6]
 arr.append({"slug": slug, "version": ver, "zip_url": url, "sha256": sha})
 print(json.dumps(arr))
 PY
 "$PLUGINS_JSON" "$SLUG" "$PVERSION" "$ZIP_URL" "$SHA")
           done
 
-          # 3) URL core pour le catalog
           CORE_ZIP="ris_app_core_${VERSION}.zip"
           if [ "$IS_TAG" = "true" ]; then
             CORE_URL="https://github.com/${REPO_SLUG}/releases/download/${RELEASE_TAG}/${CORE_ZIP}"
@@ -127,31 +124,20 @@ PY
           fi
           CORE_SHA=$(cat "artifacts/ris_app_core_${VERSION}.sha256")
 
-          # 4) Génère catalog.json (dans artifacts/ et copie dans ris_app/data/)
-          python - << 'PY'
+          echo "🧾 Génération du catalog.json..."
+          python - <<'PY'
 import json, os
 from pathlib import Path
 version = os.environ["VERSION"]
-core_url = os.environ["CORE_URL"] if "CORE_URL" in os.environ else ""
-core_url = core_url or ""
-core_zip = f"ris_app_core_{version}.zip"
 repo = os.environ.get("REPO_SLUG","")
 is_tag = os.environ.get("IS_TAG","false") == "true"
 release_tag = os.environ.get("RELEASE_TAG","")
-
-core_url = core_zip if not is_tag else f"https://github.com/{repo}/releases/download/{release_tag}/{core_zip}"
+core_zip = f"ris_app_core_{version}.zip"
+core_url = f"https://github.com/{repo}/releases/download/{release_tag}/{core_zip}" if is_tag else core_zip
 core_sha = Path(f"artifacts/ris_app_core_{version}.sha256").read_text().strip()
-
-# Récupère la liste plugins construite plus haut
-plugins_json = os.environ.get("PLUGINS_JSON", "[]")
-plugins = json.loads(plugins_json)
-
+plugins = json.loads(os.environ.get("PLUGINS_JSON", "[]"))
 catalog = {
-  "core": {
-    "version": version,
-    "zip_url": core_url,
-    "sha256": core_sha
-  },
+  "core": {"version": version, "zip_url": core_url, "sha256": core_sha},
   "plugins": plugins
 }
 Path("artifacts/catalog.json").write_text(json.dumps(catalog, indent=2), encoding="utf-8")
@@ -159,7 +145,7 @@ Path("ris_app/data").mkdir(parents=True, exist_ok=True)
 Path("ris_app/data/catalog.json").write_text(json.dumps(catalog, indent=2), encoding="utf-8")
 PY
 
-      - name: Upload artifacts (zips + catalog)
+      - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: ris_app_build
