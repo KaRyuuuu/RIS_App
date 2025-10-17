@@ -3,17 +3,22 @@ name: Build and Release RIS_app
 on:
   push:
     branches: [main]
-  tags:
-    - 'v*'
+    tags:
+      - 'v*'
   workflow_dispatch:
+
+permissions:
+  contents: write  # requis pour créer/mettre à jour une release
 
 jobs:
   build:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
+      - name: Checkout repository (with tags)
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -33,25 +38,141 @@ jobs:
       - name: Run tests
         run: pytest
 
-      - name: Generate catalog
-        run: python scripts/gen_catalog.py
-
-      - name: Prepare artifacts directory
+      - name: Resolve version
+        id: resolve_version
         run: |
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+            RELEASE_TAG="${GITHUB_REF_NAME}"
+            IS_TAG="true"
+          else
+            # Fallback: lit __version__ depuis ris_app/__init__.py
+            VERSION=$(python - << 'PY'
+from pathlib import Path
+import re
+p = Path("ris_app/__init__.py").read_text(encoding="utf-8")
+m = re.search(r"__version__\s*=\s*['\"]([^'\"]+)['\"]", p)
+print(m.group(1) if m else "0.0.0")
+PY
+)
+            RELEASE_TAG="v${VERSION}"
+            IS_TAG="false"
+          fi
+          echo "version=${VERSION}"      >> "$GITHUB_OUTPUT"
+          echo "release_tag=${RELEASE_TAG}" >> "$GITHUB_OUTPUT"
+          echo "is_tag=${IS_TAG}"        >> "$GITHUB_OUTPUT"
+
+      - name: Build zips (core & plugins) + checksums + catalog
+        env:
+          VERSION: ${{ steps.resolve_version.outputs.version }}
+          RELEASE_TAG: ${{ steps.resolve_version.outputs.release_tag }}
+          IS_TAG: ${{ steps.resolve_version.outputs.is_tag }}
+          REPO_SLUG: KaRyuuuuuu/RIS_app
+        run: |
+          set -euo pipefail
           mkdir -p artifacts
-          cp ris_app/data/catalog.json artifacts/catalog.json
-      - name: Upload artifacts
+          # 1) Zipper le core (sans plugins)
+          zip -r "artifacts/ris_app_core_${VERSION}.zip" ris_app -x "ris_app/plugins/*" >/dev/null
+          sha256sum "artifacts/ris_app_core_${VERSION}.zip" | awk '{print $1}' > "artifacts/ris_app_core_${VERSION}.sha256"
+
+          # 2) Zipper chaque plugin
+          PLUGINS_JSON="[]"
+          for d in ris_app/plugins/*; do
+            [ -d "$d" ] || continue
+            if [ ! -f "$d/plugin.json" ]; then
+              echo "WARN: $d sans plugin.json, skip"
+              continue
+            fi
+            # Lit slug & version du plugin.json via Python (pas de jq nécessaire)
+            read -r SLUG PVERSION <<EOF
+$(python - << 'PY'
+import json,sys,os
+p=sys.argv[1]
+with open(os.path.join(p,"plugin.json"),"r",encoding="utf-8") as f:
+    j=json.load(f)
+print(j.get("slug","unknown"), j.get("version","0.0.0"))
+PY
+"$d")
+EOF
+            ZIPNAME="plugin_${SLUG}_${PVERSION}.zip"
+            (cd "$d" && zip -r "../../artifacts/${ZIPNAME}" . >/dev/null)
+            SHA=$(sha256sum "artifacts/${ZIPNAME}" | awk '{print $1}')
+            echo "$SHA" > "artifacts/${ZIPNAME}.sha256"
+
+            # Construit l'URL de téléchargement pour le catalog
+            if [ "$IS_TAG" = "true" ]; then
+              ZIP_URL="https://github.com/${REPO_SLUG}/releases/download/${RELEASE_TAG}/${ZIPNAME}"
+            else
+              # Si pas de tag: URL indicative; le catalog restera utile en local.
+              ZIP_URL="${ZIPNAME}"
+            fi
+
+            # Ajoute l'entrée plugin au futur catalog.json
+            PLUGINS_JSON=$(python - << 'PY'
+import json,sys
+arr=json.loads(sys.argv[1])
+slug,ver,url,sha=sys.argv[2],sys.argv[3],sys.argv[4],sys.argv[5]
+arr.append({"slug": slug, "version": ver, "zip_url": url, "sha256": sha})
+print(json.dumps(arr))
+PY
+"$PLUGINS_JSON" "$SLUG" "$PVERSION" "$ZIP_URL" "$SHA")
+          done
+
+          # 3) URL core pour le catalog
+          CORE_ZIP="ris_app_core_${VERSION}.zip"
+          if [ "$IS_TAG" = "true" ]; then
+            CORE_URL="https://github.com/${REPO_SLUG}/releases/download/${RELEASE_TAG}/${CORE_ZIP}"
+          else
+            CORE_URL="${CORE_ZIP}"
+          fi
+          CORE_SHA=$(cat "artifacts/ris_app_core_${VERSION}.sha256")
+
+          # 4) Génère catalog.json (dans artifacts/ et copie dans ris_app/data/)
+          python - << 'PY'
+import json, os
+from pathlib import Path
+version = os.environ["VERSION"]
+core_url = os.environ["CORE_URL"] if "CORE_URL" in os.environ else ""
+core_url = core_url or ""
+core_zip = f"ris_app_core_{version}.zip"
+repo = os.environ.get("REPO_SLUG","")
+is_tag = os.environ.get("IS_TAG","false") == "true"
+release_tag = os.environ.get("RELEASE_TAG","")
+
+core_url = core_zip if not is_tag else f"https://github.com/{repo}/releases/download/{release_tag}/{core_zip}"
+core_sha = Path(f"artifacts/ris_app_core_{version}.sha256").read_text().strip()
+
+# Récupère la liste plugins construite plus haut
+plugins_json = os.environ.get("PLUGINS_JSON", "[]")
+plugins = json.loads(plugins_json)
+
+catalog = {
+  "core": {
+    "version": version,
+    "zip_url": core_url,
+    "sha256": core_sha
+  },
+  "plugins": plugins
+}
+Path("artifacts/catalog.json").write_text(json.dumps(catalog, indent=2), encoding="utf-8")
+Path("ris_app/data").mkdir(parents=True, exist_ok=True)
+Path("ris_app/data/catalog.json").write_text(json.dumps(catalog, indent=2), encoding="utf-8")
+PY
+
+      - name: Upload artifacts (zips + catalog)
         uses: actions/upload-artifact@v4
         with:
           name: ris_app_build
           path: artifacts
 
-      - name: Publish release
+      - name: Publish release (tagged builds)
         if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           files: |
             artifacts/*.zip
+            artifacts/*.sha256
             artifacts/catalog.json
+          generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
