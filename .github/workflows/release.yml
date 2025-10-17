@@ -1,18 +1,19 @@
 name: Build & Release
 
 on:
+  # 1) Création d'une release quand tu pousses un tag du style v1.2.3
   push:
     tags:
       - "v*"
+  # 2) OU tu peux déclencher à la main depuis l'onglet "Actions"
   workflow_dispatch:
     inputs:
       version:
-        description: "Version manuelle (ex: v1.0)"
+        description: "Version (ex: v0.4.2). Si vide et pas de tag, on fera 'nightly'."
         required: false
         default: ""
-
 permissions:
-  contents: write   # ✅ Nécessaire pour créer la release !
+  contents: write
 
 jobs:
   build-windows:
@@ -30,28 +31,24 @@ jobs:
       - name: Install deps
         run: |
           python -m pip install --upgrade pip
+          pip install -r requirements.txt || echo "pas de requirements.txt"
           pip install pyinstaller
 
-      - name: Check repo content
-        run: |
-          echo "=== Root ==="
-          dir
-          echo "=== Assets ==="
-          dir assets
-
-      - name: Create default servers.json
-        run: |
-          mkdir assets
-          echo [ { "name": "GitHub Latest", "url": "https://github.com/KaRyuuuu/RIS_App/releases/latest/download/RIS_App-win-x64.zip" } ] > assets/servers.json
-
+      # ⚠️ Adapte l’entrée au vrai point d'entrée de TON app
+      # (ex: launcher_ctk.py). Ajoute --icon si tu as un .ico.
       - name: Build exe (PyInstaller)
-        run: pyinstaller --noconfirm --onefile --noconsole launcher_ctk.py --add-data "assets\\servers.json;assets"
+        run: |
+            pyinstaller --noconfirm --onefile --noconsole launcher_ctk.py
+            dir dist
 
+
+      # (Optionnel) Zip propret pour distribution
       - name: Prepare ZIP
         shell: pwsh
         run: |
-          mkdir release
+          New-Item -ItemType Directory -Force -Path release
           Copy-Item dist\\launcher_ctk.exe release\\RIS_App.exe
+          # Ajoute d'autres fichiers si besoin (README, config par défaut, etc.)
           Compress-Archive -Path release\\* -DestinationPath RIS_App-win-x64.zip
           CertUtil -hashfile RIS_App-win-x64.zip SHA256 > SHA256SUM.txt
 
@@ -59,9 +56,11 @@ jobs:
         id: version
         shell: bash
         run: |
+          # Priorité au tag
           if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
             TAG="${GITHUB_REF_NAME}"
           else
+            # sinon input manuel (Actions -> Run workflow)
             TAG="${{ github.event.inputs.version }}"
           fi
           if [[ -z "$TAG" ]]; then
@@ -71,6 +70,7 @@ jobs:
             echo "IS_PRERELEASE=false" >> $GITHUB_OUTPUT
           fi
           echo "tag=$TAG" >> $GITHUB_OUTPUT
+          echo "Version: $TAG"
 
       - name: Create/Update GitHub Release
         uses: softprops/action-gh-release@v2
@@ -78,6 +78,7 @@ jobs:
           tag_name: ${{ steps.version.outputs.tag }}
           name: ${{ steps.version.outputs.tag }}
           prerelease: ${{ steps.version.outputs.IS_PRERELEASE }}
+          draft: false
           files: |
             dist/launcher_ctk.exe
             RIS_App-win-x64.zip
