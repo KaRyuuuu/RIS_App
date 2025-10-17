@@ -47,18 +47,21 @@ jobs:
             RELEASE_TAG="${GITHUB_REF_NAME}"
             IS_TAG="true"
           else
-            echo "from pathlib import Path, re; \
-p=Path('ris_app/__init__.py').read_text(); \
-import re; m=re.search(r'__version__\\s*=\\s*[\"\\']([^\"\\']+)[\"\\']', p); \
+            echo "from pathlib import Path, re, sys
+p = Path('ris_app/__init__.py').read_text(encoding='utf-8')
+import re
+m = re.search(r'__version__\\s*=\\s*[\"\\']([^\"\\']+)[\"\\']', p)
 print(m.group(1) if m else '0.0.0')" > get_version.py
+
             VERSION=$(python get_version.py)
             RELEASE_TAG="v${VERSION}"
             IS_TAG="false"
           fi
+
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "release_tag=${RELEASE_TAG}" >> "$GITHUB_OUTPUT"
           echo "is_tag=${IS_TAG}" >> "$GITHUB_OUTPUT"
-          echo "✅ Version résolue: ${VERSION}"
+          echo "✅ Version détectée : ${VERSION}"
 
       - name: Build zips (core & plugins) + checksums + catalog
         shell: bash
@@ -103,21 +106,22 @@ print(m.group(1) if m else '0.0.0')" > get_version.py
           fi
           CORE_SHA=$(cat "artifacts/ris_app_core_${VERSION}.sha256")
 
-          echo "🧾 Génération du catalog.json..."
-          python - <<EOF
-import json, os, pathlib
-version = os.environ["VERSION"]
-core_url = os.environ.get("CORE_URL", "${CORE_URL}")
-core_sha = open(f"artifacts/ris_app_core_{version}.sha256").read().strip()
-plugins = json.loads('''${PLUGINS_JSON}''')
-catalog = {
-  "core": {"version": version, "zip_url": core_url, "sha256": core_sha},
-  "plugins": plugins
-}
-pathlib.Path("artifacts/catalog.json").write_text(json.dumps(catalog, indent=2), encoding="utf-8")
-pathlib.Path("ris_app/data").mkdir(parents=True, exist_ok=True)
-pathlib.Path("ris_app/data/catalog.json").write_text(json.dumps(catalog, indent=2), encoding="utf-8")
-EOF
+          echo "🧾 Création du catalog.json..."
+          echo "import json, os, pathlib
+version=os.environ['VERSION']
+core_zip=f'ris_app_core_{version}.zip'
+repo=os.environ.get('REPO_SLUG','')
+is_tag=os.environ.get('IS_TAG','false')=='true'
+release_tag=os.environ.get('RELEASE_TAG','')
+core_url=f'https://github.com/{repo}/releases/download/{release_tag}/{core_zip}' if is_tag else core_zip
+core_sha=open(f'artifacts/ris_app_core_{version}.sha256').read().strip()
+plugins=json.loads('''${PLUGINS_JSON}''')
+catalog={'core':{'version':version,'zip_url':core_url,'sha256':core_sha},'plugins':plugins}
+pathlib.Path('artifacts/catalog.json').write_text(json.dumps(catalog,indent=2),encoding='utf-8')
+pathlib.Path('ris_app/data').mkdir(parents=True,exist_ok=True)
+pathlib.Path('ris_app/data/catalog.json').write_text(json.dumps(catalog,indent=2),encoding='utf-8')
+" > gen_catalog.py
+          python gen_catalog.py
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
