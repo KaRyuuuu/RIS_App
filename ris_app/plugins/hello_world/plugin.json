@@ -1,9 +1,0 @@
-{
-  "name": "Hello World",
-  "slug": "hello_world",
-  "version": "1.0.0",
-  "author": "KaRyuu",
-  "description": "Plugin de démonstration.",
-  "entry": "plugin:HelloWorldPlugin",
-  "enabled": true
-}

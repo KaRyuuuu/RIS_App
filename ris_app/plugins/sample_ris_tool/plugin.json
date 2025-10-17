@@ -1,9 +1,0 @@
-{
-  "name": "Sample RIS Tool",
-  "slug": "sample_ris_tool",
-  "version": "0.5.0",
-  "author": "KaRyuu",
-  "description": "Exemple de plugin simulant un outil RIS.",
-  "entry": "plugin:SampleRISToolPlugin",
-  "enabled": false
-}
