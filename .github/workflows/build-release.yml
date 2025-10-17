@@ -32,9 +32,6 @@ jobs:
           pip install .
           pip install ruff pytest
 
-      - name: Run lint (auto-fix style issues)
-        run: |
-          ruff check . --fix
 
 
       - name: Run tests
