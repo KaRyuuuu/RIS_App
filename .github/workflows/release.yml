@@ -35,10 +35,9 @@ jobs:
       # ⚠️ Adapte l’entrée au vrai point d'entrée de TON app
       # (ex: launcher_ctk.py). Ajoute --icon si tu as un .ico.
       - name: Build exe (PyInstaller)
-        run: |
-          pyinstaller --noconfirm --onefile --noconsole launcher_ctk.py ^
-            --add-data "assets\\servers.json;assets"
-          dir dist
+        run: pyinstaller --noconfirm --onefile --noconsole launcher_ctk.py --add-data "assets\servers.json;assets"
+            dir dist
+
 
       # (Optionnel) Zip propret pour distribution
       - name: Prepare ZIP
