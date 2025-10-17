@@ -36,7 +36,7 @@ jobs:
       # (ex: launcher_ctk.py). Ajoute --icon si tu as un .ico.
       - name: Build exe (PyInstaller)
         run: |
-            pyinstaller --noconfirm --onefile --noconsole launcher_ctk.py --add-data "assets\servers.json;assets"
+            pyinstaller --noconfirm --onefile --noconsole launcher_ctk.py
             dir dist
 
 

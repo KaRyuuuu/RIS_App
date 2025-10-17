@@ -25,7 +25,7 @@ def load_servers() -> List[Server]:
     Lit assets/servers.json et retourne une liste de Server.
     Format attendu:
     [
-      {"name":"Primary CDN","url":"https://cdn1.example.com","region":"EU"},
+      {"name":"Primary CDN","url":"https://github.com/KaRyuuuu/RIS_App/releases/latest/download","region":"EU"},
       ...
     ]
     """
